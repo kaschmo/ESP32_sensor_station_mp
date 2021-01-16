@@ -10,6 +10,8 @@ import machine
 import webrepl # do it in main, not in boot since Wifi needs to be connected first.
 import esp32
 from bme280 import BME280
+from hcsr04 import HCSR04
+import ujson
 
 # garbage collection on 
 gc.collect()
@@ -35,7 +37,7 @@ display.write('IP', wifi.get_ip())
 mqtt = MQTTHandler(config.get('mqtt_client_id'), config.get('mqtt_server'), config.get('mqtt_in_topic'), config.get('mqtt_out_topic'))
 
 #LED Pin 25
-led = Pin(25, Pin.OUT)
+led = Pin(config.get('led_pin'), Pin.OUT)
 
 #Analog Tmp sensor
 tmp_sensor = machine.ADC(machine.Pin(37)) #GPIO 37
@@ -43,6 +45,9 @@ tmp_sensor = machine.ADC(machine.Pin(37)) #GPIO 37
 #BME280
 i2c = I2C(scl=Pin(22), sda=Pin(21), freq=10000)
 bme = BME280(i2c=i2c)
+
+#distance sensor
+us_sensor = HCSR04(trigger_pin=14, echo_pin=12,echo_timeout_us=1000000)
 
 
 #http server----------------------------
@@ -62,95 +67,44 @@ def _httpHandlerLED(httpClient, httpResponse) :
 
 @MicroWebSrv.route('/mqtt')
 def _httpHandlerMQTT(httpClient, httpResponse) :
-    print("In /mqtt Get Handler")
-    mqtt.publish('temp', '300')
-    content = """\
-    <!DOCTYPE html>
-    <html lang=en>
-        <head>
-        	<meta charset="UTF-8" />
-            <title>MQTT sent</title>
-        </head>
-        <body>
-            <h1>MQTT Sent</h1>
-        </body>
-    </html>
-	"""
-    httpResponse.WriteResponseOk( headers		 = None,
-								  contentType	 = "text/html",
-								  contentCharset = "UTF-8",
-								  content 		 = content )
+    print("In /mqtt Get Handler: sendig mqtt")
+    send_sensor_values_mqtt()
+    httpResponse.WriteResponseRedirect('index.html')
 
+@MicroWebSrv.route('/lcd')
+def _httpHandlerLCD(httpClient, httpResponse) :
+    print("In /lcd Get Handler: switching display")
+    btn_callback(0)
+    httpResponse.WriteResponseRedirect('index.html')
 
-@MicroWebSrv.route('/test')
-def _httpHandlerTestGet(httpClient, httpResponse) :
-    print("In /test Get Handler")
-    content = """\
-    <!DOCTYPE html>
-    <html lang=en>
-        <head>
-        	<meta charset="UTF-8" />
-            <title>TEST GET</title>
-        </head>
-        <body>
-            <h1>TEST GET</h1>
-            Client IP address = %s
-            <br />
-			<form action="/test" method="post" accept-charset="ISO-8859-1">
-				First name: <input type="text" name="firstname"><br />
-				Last name: <input type="text" name="lastname"><br />
-				<input type="submit" value="Submit">
-			</form>
-        </body>
-    </html>
-	""" % httpClient.GetIPAddr()
-    httpResponse.WriteResponseOk( headers		 = None,
-								  contentType	 = "text/html",
-								  contentCharset = "UTF-8",
-								  content 		 = content )
-    
-
-@MicroWebSrv.route('/test', 'POST')
-def _httpHandlerTestPost(httpClient, httpResponse) :
-    formData  = httpClient.ReadRequestPostedFormData()
-    firstname = formData["firstname"]
-    lastname  = formData["lastname"]
-    display.write(firstname, lastname)
-    print("In /test POST Handler")
-    content   = """\
-	<!DOCTYPE html>
-	<html lang=en>
-		<head>
-			<meta charset="UTF-8" />
-            <title>TEST POST</title>
-        </head>
-        <body>
-            <h1>TEST POST</h1>
-            Firstname = %s<br />
-            Lastname = %s<br />
-        </body>
-    </html>
-	""" % ( MicroWebSrv.HTMLEscape(firstname),
-		    MicroWebSrv.HTMLEscape(lastname) )
-    httpResponse.WriteResponseOk( headers		 = None,
-								  contentType	 = "text/html",
-								  contentCharset = "UTF-8",
-								  content 		 = content )
-
-#test to transmit data to a dynamic hall.html website
-@MicroWebSrv.route('/hall', 'GET')
-def _httpHandlerHall(httpClient, httpResponse) :
-    data = '{0:.1f}'.format(esp32.hall_sensor())
+@MicroWebSrv.route('/sensors', 'GET')
+def _httpHandlerSensors(httpClient, httpResponse) :
+    data = 'Hall: {0:.1f} <br> CPU: {1:.1f}&deg;C'.format(esp32.hall_sensor(), esp32.raw_temperature())
+    # es funktionieren keine \n im string.
     httpResponse.WriteResponseOk(
         headers = ({'Cache-Control': 'no-cache'}),
         contentType = 'text/event-stream',
         contentCharset = 'UTF-8',
         content = 'data: {0}\n\n'.format(data) )
 
-@MicroWebSrv.route('/sensors', 'GET')
-def _httpHandlerSensors(httpClient, httpResponse) :
-    data = 'Hall: {0:.1f} CPU: {1:.1f}&deg;C'.format(esp32.hall_sensor(), esp32.raw_temperature())
-    # es funktionieren keine \n im string.
+def create_sensor_tuple(name, value):
+    sdict={}
+    sdict["name"] = name
+    sdict["value"]= value
+    return sdict
+
+# server send event to update sensor values. JSON stream
+@MicroWebSrv.route('/jsonsensorstream', 'GET')
+def _httpHandlerJSONStream(httpClient, httpResponse) :
+    #create json stream to send via server events to clients
+    #todo: eigentlich brauche ich tuple: ID, sensor_name, sensor_value
+    dump_dict={}
+    dump_dict["temperature"] = create_sensor_tuple("Temperature", bme.temperature)
+    dump_dict["humidity"] = create_sensor_tuple("Humidity", bme.humidity)
+    dump_dict["pressure"] = create_sensor_tuple("Pressure", bme.pressure)
+    dump_dict["analog_temp"] = create_sensor_tuple("Analog Temperature", str(tmp_sensor.read()))
+    data = ujson.dumps(dump_dict)
+
     httpResponse.WriteResponseOk(
         headers = ({'Cache-Control': 'no-cache'}),
         contentType = 'text/event-stream',
@@ -160,25 +114,34 @@ def _httpHandlerSensors(httpClient, httpResponse) :
 print('Starting WebSrv...')
 #http server start
 srv = MicroWebSrv(webPath='www/')
-#srv.MaxWebSocketRecvLen     = 256
-#srv.WebSocketThreaded		= False
 srv.Start(threaded=True)
-display.write('Started WebSrv')
 
 # display OLED paging menu
 def btn_callback(p): 
     if (display.menu_page == 0 ):
-        display.write('IP',wifi.get_ip())
+        display.write('Temp: ' + bme.temperature, 'Humidity: '+bme.humidity, 'Pressure: '+bme.pressure)
         display.next_page()
     elif (display.menu_page == 1):
-        display.write('Hall Sensor', str(esp32.hall_sensor()))
+        display.write('Internal', 'IP:' + wifi.get_ip(), 'Hall:' + str(esp32.hall_sensor()),'CPU:' + str(esp32.raw_temperature()))
         display.next_page()
     elif (display.menu_page == 2):
-        display.write('CPU Temp', str(esp32.raw_temperature()))
+        display.write('last page')
         display.wrap()
     
-btn = Pin(0, Pin.IN)
+btn = Pin(config.get('button_pin'), Pin.IN)
 btn.irq(trigger=Pin.IRQ_FALLING, handler=btn_callback)
+
+def send_sensor_values_mqtt():
+    # send cpu temperature
+    mqtt.publish('cpu_temp', str(esp32.raw_temperature()))
+    # send hall_sensor
+    mqtt.publish('hall_sensor', str(esp32.hall_sensor()))
+    #send bme280 values        
+    mqtt.publish('temperature', bme.temperature)
+    mqtt.publish('humidity', bme.humidity)
+    mqtt.publish('pressure', bme.pressure)
+    #analog tmp sensor
+    mqtt.publish('analog_tmp', str(tmp_sensor.read()))
 
 # main loop
 while True:
@@ -188,25 +151,13 @@ while True:
     #mqtt send cycle
     if (time.ticks_ms() - last_mqtt_timer) > config.get("mqtt_send_cycle"):
         last_mqtt_timer = time.ticks_ms()
-        # send cpu temperature
-        mqtt.publish('cpu_temp', str(esp32.raw_temperature()))
-        # send hall_sensor
-        mqtt.publish('hall_sensor', str(esp32.hall_sensor()))
-
-        #send bme280 values        
-        mqtt.publish('temperature', str(bme.temperature))
-        mqtt.publish('humidity', str(bme.humidity))
-        mqtt.publish('pressure', str(bme.pressure))
-        
-        #analog tmp sensor
-        mqtt.publish('analog_tmp', str(tmp_sensor.read()))
-
+        send_sensor_values_mqtt()
 
     #main Cycle
     if (time.ticks_ms() - last_main_timer) > config.get("main_cycle"):
         #print('Takt 1s')
         last_main_timer = time.ticks_ms()
-        
+        print(str(us_sensor.distance_cm()))
         # todo implement. deep sleep between cycles
         #ACHTUNG gefährlich
         #machine.deepsleep(10000)

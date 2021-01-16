@@ -1,1 +1,5 @@
 main.conf
+00_backup/
+00_Libraries_not_copied/
+old_code.py
+00_temp/

@@ -6,14 +6,19 @@
 </head>
 <body>
 
-<h1>MicroPython ESP32 Hall Sensor</h1>
-<div id="result" style="color: SlateBlue; font-size: 200%; font-family: Monaco, monospace; margin: 20px"></div>
+<h1>MicroPython Server Side Event Test</h1>
+<div id="result" style="color: black; font-size: 100%; font-family: Arial, Helvetica, sans-serif, monospace; margin: 20px"></div>
 
 <script>
 if(typeof(EventSource) !== 'undefined') {
-    const source = new EventSource('http://' + window.location.hostname + '/hall');
+    const source = new EventSource('http://' + window.location.hostname + '/jsonsensorstream');
     source.onmessage = function(e) {
-        document.getElementById("result").innerHTML = e.data;
+        document.getElementById("result").innerHTML = "";
+        var jsonstring = JSON.parse(e.data);
+        for (var key in jsonstring){
+            var value = jsonstring[key];
+            document.getElementById("result").innerHTML += "<br>" + key + ": " + value;
+        }
     };
 } else {
     document.getElementById("result").innerHTML = "Sorry, your browser does not support server-sent events...";

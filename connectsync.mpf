@@ -1,4 +1,2 @@
 open tty.SLAB_USBtoUART
-mput .*\.py
-put main.conf
-ls
+repl
