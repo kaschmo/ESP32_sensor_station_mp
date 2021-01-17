@@ -43,11 +43,11 @@ led = Pin(config.get('led_pin'), Pin.OUT)
 tmp_sensor = machine.ADC(machine.Pin(37)) #GPIO 37
 
 #BME280
-i2c = I2C(scl=Pin(22), sda=Pin(21), freq=10000)
+i2c = I2C(scl=Pin(config.get('bme_scl')), sda=Pin(config.get('bme_sda')), freq=10000)
 bme = BME280(i2c=i2c)
 
 #distance sensor
-us_sensor = HCSR04(trigger_pin=14, echo_pin=12,echo_timeout_us=1000000)
+us_sensor = HCSR04(trigger_pin=config.get('hcsr_trigger'), echo_pin=config.get('hcsr_echo'),echo_timeout_us=1000000)
 
 
 #http server----------------------------
@@ -60,7 +60,7 @@ def _httpHandlerLED(httpClient, httpResponse) :
 
 #Reset
 @MicroWebSrv.route('/reset')
-def _httpHandlerLED(httpClient, httpResponse) :
+def _httpHandlerReset(httpClient, httpResponse) :
     print('Restarting...')
     machine.reset()
     httpResponse.WriteResponseRedirect('index.html')
@@ -77,6 +77,41 @@ def _httpHandlerLCD(httpClient, httpResponse) :
     btn_callback(0)
     httpResponse.WriteResponseRedirect('index.html')
 
+@MicroWebSrv.route('/config')
+def _httpHandlerConfig(httpClient, httpResponse) :
+    print("In /config Get Handler: Displaying Config values")
+    content = """\
+    <!DOCTYPE html>
+    <html lang=en>
+        <head>
+        	<meta charset="UTF-8" />
+            <title>Configuration</title>
+        </head>
+        <body>
+            <h2>Configuration</h2>
+    """
+    json_config=config.get_json()
+
+    for key in json_config:
+        value = json_config[key]
+        if key == 'password':
+            value = "xxxxx"
+        content += "<p>"+key+": "+str(value)+"</p>"
+
+    content += """	
+            <form action="/index.html">
+                <input type="submit" value="Back" />
+            </form>	
+        </body>
+    </html>
+	"""
+    print(content)
+    httpResponse.WriteResponseOk( headers		 = None,
+								  contentType	 = "text/html",
+								  contentCharset = "UTF-8",
+								  content 		 = content )
+
+#only temp. can be deleted
 @MicroWebSrv.route('/sensors', 'GET')
 def _httpHandlerSensors(httpClient, httpResponse) :
     data = 'Hall: {0:.1f} <br> CPU: {1:.1f}&deg;C'.format(esp32.hall_sensor(), esp32.raw_temperature())
@@ -87,6 +122,7 @@ def _httpHandlerSensors(httpClient, httpResponse) :
         contentCharset = 'UTF-8',
         content = 'data: {0}\n\n'.format(data) )
 
+#service function for json string creation
 def create_sensor_tuple(name, value):
     sdict={}
     sdict["name"] = name
@@ -137,11 +173,12 @@ def send_sensor_values_mqtt():
     # send hall_sensor
     mqtt.publish('hall_sensor', str(esp32.hall_sensor()))
     #send bme280 values        
-    mqtt.publish('temperature', bme.temperature)
-    mqtt.publish('humidity', bme.humidity)
-    mqtt.publish('pressure', bme.pressure)
+    mqtt.publish('temperature', str(bme.temperature_float))
+    mqtt.publish('humidity', str(bme.humidity_float))
+    mqtt.publish('pressure', str(bme.pressure_float))
     #analog tmp sensor
     mqtt.publish('analog_tmp', str(tmp_sensor.read()))
+    mqtt.publish('ip_address', str(wifi.get_ip()))
 
 # main loop
 while True:

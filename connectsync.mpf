@@ -1,2 +1,2 @@
 open tty.SLAB_USBtoUART
-repl
+ls

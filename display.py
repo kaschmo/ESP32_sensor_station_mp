@@ -47,6 +47,7 @@ class LEDDisplay:
     
     def wrap(self):
         self.menu_page = 0
+        self.menu_timer = time.ticks_ms()
 
     def refresh(self):
         #todo hard coded

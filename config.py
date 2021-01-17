@@ -16,6 +16,10 @@ class Config:
             return self.values[name]
         return ''
 
+    # return full json
+    def get_json(self):
+        return self.values
+
     # updates the specified parameter
     def set(self, name, value):
         self.values[name] = value

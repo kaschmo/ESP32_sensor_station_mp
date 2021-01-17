@@ -1,4 +1,5 @@
 open tty.SLAB_USBtoUART
-put main.py
+mput .*\.py
+put main.conf
 put ./www/index.html /www/index.html
 ls
